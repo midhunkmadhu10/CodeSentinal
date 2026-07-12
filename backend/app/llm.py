@@ -77,32 +77,44 @@ def call_llm(
     # Try to parse the JSON response
     # Handle markdown code blocks if present
     if content.startswith("```"):
-        # Extract JSON from markdown code block
-        lines = content.split("\n")
-        json_lines = []
-        in_block = False
-        for line in lines:
-            if line.startswith("```"):
-                in_block = not in_block
-                continue
-            if in_block:
-                json_lines.append(line)
-        content = "\n".join(json_lines)
+        # Extract JSON from the outermost markdown code block
+        first_newline = content.find("\n")
+        last_backticks = content.rfind("```")
+        if last_backticks > first_newline:
+            content = content[first_newline:last_backticks].strip()
+        else:
+            # Fallback: remove first line and last line if they have backticks
+            lines = content.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
 
     content = content.strip()
 
     try:
         data = json.loads(content)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as err:
         # Try to find JSON array in the text
         start = content.find("[")
         end = content.rfind("]") + 1
         if start >= 0 and end > start:
             try:
                 data = json.loads(content[start:end])
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as sub_err:
+                print("=== JSON Parsing Failure ===")
+                print(f"Error: {sub_err}")
+                print("Raw Content:")
+                print(content)
+                print("============================")
                 raise ValueError(f"Failed to parse LLM response as JSON: {content[:200]}...")
         else:
+            print("=== JSON Parsing Failure (No array markers found) ===")
+            print(f"Error: {err}")
+            print("Raw Content:")
+            print(content)
+            print("=====================================================")
             raise ValueError(f"Failed to parse LLM response as JSON: {content[:200]}...")
 
     findings = []
