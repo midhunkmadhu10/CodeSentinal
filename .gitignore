@@ -1,0 +1,52 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+dist
+dist-ssr
+*.local
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+*.egg
+
+# Environment
+.env
+.env.local
+.env.production
+.env.development
+.env.example
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Next.js
+.next/
+out/
+
+# Python
+venv/
+.venv/
+
+# FAISS cache
+*.faiss
+
+# OS
+Thumbs.db
