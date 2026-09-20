@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { clearToken, getToken, storeToken } from './api';
 
 interface AuthContextType {
   token: string | null;
@@ -20,19 +21,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = localStorage.getItem('codesentinal_token');
+    const stored = getToken();
     if (stored) {
       setToken(stored);
     }
   }, []);
 
   const login = useCallback((newToken: string) => {
-    localStorage.setItem('codesentinal_token', newToken);
+    storeToken(newToken);
     setToken(newToken);
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem('codesentinal_token');
+    clearToken();
     setToken(null);
   }, []);
 

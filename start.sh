@@ -18,7 +18,9 @@ cd backend
 if [ ! -f .env ]; then
     cp .env.example .env
     echo "   Created backend/.env from .env.example"
-    echo "   ⚠️  Edit backend/.env to set your LLM_API_KEY"
+    echo "   ⚠️  Edit backend/.env — fill in AUTH_USERNAME, AUTH_PASSWORD,"
+    echo "   ⚠️  AUTH_TOKEN and LLM_API_KEY. The backend refuses to start" 
+    echo "   ⚠️  protected routes until they are set."
 fi
 
 # Install Python deps if needed
@@ -68,7 +70,7 @@ echo "║  Frontend:  http://localhost:3000             ║"
 echo "║  Backend:   http://localhost:8000             ║"
 echo "║  API Docs:  http://localhost:8000/docs        ║"
 echo "║                                              ║"
-echo "║  Login: admin / codesentinal                 ║"
+echo "║  Login: credentials are set in backend/.env  ║"
 echo "║                                              ║"
 echo "║  Press Ctrl+C to stop all services.          ║"
 echo "╚══════════════════════════════════════════════╝"

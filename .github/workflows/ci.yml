@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          # Auth is fail-closed; tests provide their own values for anything
+          # they exercise. These keep config validation satisfied on import.
+          AUTH_USERNAME: ci-test-user
+          AUTH_PASSWORD: ci-test-password
+          AUTH_TOKEN: ci-test-token
+          LLM_API_KEY: ci-test-key
+        run: pytest -v
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # npm workspaces: single root lockfile, workspace scripts run from root
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --workspace=frontend
+
+      - name: Lint
+        run: npm run lint --workspace=frontend
+
+      - name: Build
+        run: npm run build --workspace=frontend

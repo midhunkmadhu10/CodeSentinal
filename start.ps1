@@ -9,7 +9,9 @@ Set-Location -Path "backend"
 if (-not (Test-Path ".env")) {
     Copy-Item -Path ".env.example" -Destination ".env"
     Write-Host "   Created backend/.env from .env.example"
-    Write-Host "   Please edit backend/.env to set your LLM_API_KEY"
+    Write-Host "   Please edit backend/.env — fill in AUTH_USERNAME, AUTH_PASSWORD,"
+    Write-Host "   AUTH_TOKEN and LLM_API_KEY. Protected routes fail closed until"
+    Write-Host "   they are set."
 }
 
 if (-not (Test-Path "venv")) {
@@ -52,7 +54,7 @@ Write-Host "  Frontend:  http://localhost:3000            "
 Write-Host "  Backend:   http://localhost:8000            "
 Write-Host "  API Docs:  http://localhost:8000/docs       "
 Write-Host "                                              "
-Write-Host "  Login: admin / codesentinal                 "
+Write-Host "  Login: credentials are set in backend/.env  "
 Write-Host "                                              "
 Write-Host "  Press Ctrl+C to stop the powershell window. "
 Write-Host "  (You may need to kill the processes later)  "
