@@ -23,10 +23,16 @@ from app.github import import_repository_review
 
 app = FastAPI(title="CodeSentinal Lite API", version="1.0.0")
 
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if origin.strip()
+]
+
 # CORS — allow frontend dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,7 +49,7 @@ def health():
 def settings_status(_=Depends(verify_token)):
     return {
         "backend_api_key_configured": bool(os.getenv("LLM_API_KEY", "").strip()),
-        "llm_endpoint": os.getenv("LLM_ENDPOINT", "https://api.example.com/v1/chat/completions"),
+        "llm_endpoint": os.getenv("LLM_ENDPOINT", ""),
         "llm_model": os.getenv("LLM_MODEL", "gpt-4o-mini"),
     }
 
@@ -53,7 +59,7 @@ def settings_status(_=Depends(verify_token)):
 def login(req: LoginRequest):
     if not verify_credentials(req.username, req.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    return LoginResponse(token=os.getenv("AUTH_TOKEN", "codesentinal-token-123"))
+    return LoginResponse(token=os.getenv("AUTH_TOKEN", ""))
 
 
 # ── Demo ────────────────────────────────────────────────────────────────────
@@ -154,10 +160,10 @@ def analyze(req: AnalyzeRequest, _=Depends(verify_token)):
 
     except ValueError as e:
         return AnalyzeResponse(findings=[], error=str(e))
-    except Exception as e:
+    except Exception:
         return AnalyzeResponse(
             findings=[],
-            error=f"Analysis failed: {str(e)}. Please try again or check your API key and endpoint."
+            error="Analysis failed. Please try again or check your API key and endpoint."
         )
 
 
@@ -165,4 +171,9 @@ def analyze(req: AnalyzeRequest, _=Depends(verify_token)):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=os.getenv("UVICORN_RELOAD", "false").lower() == "true",
+    )

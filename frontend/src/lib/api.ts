@@ -7,10 +7,7 @@ function getToken(): string | null {
   return null;
 }
 
-async function apiRequest<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
+async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -18,19 +15,14 @@ async function apiRequest<T>(
   };
 
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-  });
-
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Request failed with status ${res.status}`);
   }
-
   return res.json();
 }
 
@@ -65,10 +57,7 @@ export async function analyze(params: AnalyzeParams) {
     findings: { severity: string; file_line: string; risk: string; rule_violation: string; safer_code: string; source_chunk: string }[];
     screening_suggestions: { priority: string; title: string; action: string }[];
     error: string | null;
-  }>('/api/analyze', {
-    method: 'POST',
-    body: JSON.stringify(params),
-  });
+  }>('/api/analyze', { method: 'POST', body: JSON.stringify(params) });
 }
 
 export async function fetchHealth(): Promise<{ status: string; service: string }> {
@@ -90,8 +79,5 @@ export async function importGitHubRepository(params: { repository: string; pull_
     policy: string | null;
     policy_path: string | null;
     error: string | null;
-  }>('/api/github/import', {
-    method: 'POST',
-    body: JSON.stringify(params),
-  });
+  }>('/api/github/import', { method: 'POST', body: JSON.stringify(params) });
 }

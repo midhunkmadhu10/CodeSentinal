@@ -6,7 +6,8 @@
     "dev": "cd frontend && npm run dev",
     "build": "cd frontend && npm run build",
     "start": "cd frontend && npm start",
-    "backend": "cd backend && uvicorn main:app --reload --port 8000"
+    "backend": "cd backend && uvicorn main:app --reload --port 8000",
+    "typecheck": "npm run typecheck --workspace=frontend"
   },
   "workspaces": ["frontend"]
 }

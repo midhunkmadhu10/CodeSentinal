@@ -24,7 +24,9 @@ build/
 .env.local
 .env.production
 .env.development
-.env.example
+!.env.example
+!backend/.env.example
+!frontend/.env.local.example
 
 # Editor
 .vscode/*
@@ -47,6 +49,7 @@ venv/
 
 # FAISS cache
 *.faiss
+*.tsbuildinfo
 
 # OS
 Thumbs.db

@@ -1,24 +1,20 @@
-"""Small GitHub REST client for importing a PR diff and repository policy.
-
-The access token is request-scoped: it is never written to disk or retained by
-the application. GitHub URLs are parsed strictly to prevent arbitrary URL fetches.
-"""
+"""Small GitHub REST client for importing a PR diff and repository policy."""
 
 import base64
 import json
 import re
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
 from urllib.request import Request, urlopen
-
 
 POLICY_PATHS = ("SECURITY.md", ".github/SECURITY.md", "SECURITY_POLICY.md")
 
 
 def parse_repository(value: str) -> tuple[str, str]:
-    value = value.strip()
-    match = re.fullmatch(r"(?:https?://github\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?", value)
+    match = re.fullmatch(
+        r"(?:https?://github\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?",
+        value.strip(),
+    )
     if not match:
         raise ValueError("Enter a GitHub repository as owner/repository or https://github.com/owner/repository.")
     return match.group(1), match.group(2)
@@ -27,10 +23,9 @@ def parse_repository(value: str) -> tuple[str, str]:
 def _request_json(url: str, access_token: Optional[str]) -> dict:
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "CodeSentinal"}
     if access_token:
-        headers["Authorization"] = f"Bearer {access_token.strip()}"
-    request = Request(url, headers=headers)
+        headers["Authorization"] = f"Bearer {access_token}"
     try:
-        with urlopen(request, timeout=15) as response:
+        with urlopen(Request(url, headers=headers), timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         if exc.code in (401, 403, 404):
@@ -43,7 +38,7 @@ def _request_json(url: str, access_token: Optional[str]) -> dict:
 def _request_text(url: str, access_token: Optional[str]) -> str:
     headers = {"Accept": "application/vnd.github.v3.diff", "User-Agent": "CodeSentinal"}
     if access_token:
-        headers["Authorization"] = f"Bearer {access_token.strip()}"
+        headers["Authorization"] = f"Bearer {access_token}"
     try:
         with urlopen(Request(url, headers=headers), timeout=20) as response:
             return response.read().decode("utf-8")
@@ -68,9 +63,8 @@ def _load_policy(owner: str, repo: str, access_token: Optional[str]) -> tuple[Op
 def import_repository_review(repository: str, pull_number: Optional[int], access_token: Optional[str]) -> tuple[str, str, Optional[str], Optional[str]]:
     owner, repo = parse_repository(repository)
     base_url = f"https://api.github.com/repos/{owner}/{repo}"
-
     if pull_number:
-        pull = _request_json(f"{base_url}/pulls/{pull_number}", access_token)
+        _request_json(f"{base_url}/pulls/{pull_number}", access_token)
         diff = _request_text(f"{base_url}/pulls/{pull_number}", access_token)
     else:
         repo_data = _request_json(base_url, access_token)
@@ -81,9 +75,7 @@ def import_repository_review(repository: str, pull_number: Optional[int], access
         head = commits[0]["sha"]
         base = commits[0]["parents"][0]["sha"]
         diff = _request_text(f"{base_url}/compare/{base}...{head}", access_token)
-
     if not diff.strip():
         raise ValueError("GitHub returned an empty diff for this selection.")
-
     policy, policy_path = _load_policy(owner, repo, access_token)
     return f"{owner}/{repo}", diff, policy, policy_path

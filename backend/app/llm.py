@@ -49,7 +49,7 @@ def call_llm(
 ) -> List[Finding]:
     """Call the OpenAI-compatible API and parse the response into Finding objects."""
     if endpoint is None:
-        endpoint = os.getenv("LLM_ENDPOINT", "https://api.example.com/v1/chat/completions")
+        endpoint = os.getenv("LLM_ENDPOINT", "")
     if model is None:
         model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     if api_key is None:
@@ -57,6 +57,8 @@ def call_llm(
 
     if not api_key:
         raise ValueError("LLM_API_KEY is not configured")
+    if not endpoint:
+        raise ValueError("LLM_ENDPOINT is not configured")
 
     client = OpenAI(base_url=endpoint, api_key=api_key)
 

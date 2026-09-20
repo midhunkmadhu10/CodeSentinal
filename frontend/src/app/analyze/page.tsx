@@ -356,7 +356,7 @@ export default function AnalyzePage() {
                 </div>
                 <h3 className="text-lg font-medium mb-2">No context loaded</h3>
                 <p className="text-foreground-muted font-light max-w-sm mx-auto mb-8">
-                  Upload your organization's security guidelines, OWASP rules, or coding standards.
+                  Upload your organization&apos;s security guidelines, OWASP rules, or coding standards.
                 </p>
                 <button 
                   onClick={() => setSourceOpen(true)}
@@ -684,7 +684,7 @@ export default function AnalyzePage() {
             </div>
             
             <p className="text-[14px] text-foreground-muted mb-8 font-light">
-              Upload a Markdown (.md) or Text (.txt) file containing your organization's security guidelines, OWASP standards, or custom AI instructions.
+              Upload a Markdown (.md) or Text (.txt) file containing your organization&apos;s security guidelines, OWASP standards, or custom AI instructions.
             </p>
             
             <button 
