@@ -2,7 +2,7 @@
 import json
 from types import SimpleNamespace
 
-import httpx2 as httpx
+import httpx
 import openai
 import pytest
 

@@ -221,3 +221,138 @@ def call_llm(diff: str, rules_chunks: List[str]) -> List[Finding]:
 
     logger.info("LLM response received (chars=%d, model=%s)", len(content), model)
     return _parse_findings(content)
+
+
+# ── Typed chat API used by agents (with usage/cost accounting) ───────────────
+
+import time
+from dataclasses import dataclass
+
+from .config import EMBEDDINGS_ENDPOINT, EMBEDDINGS_MODEL, INDEX_EMBED_BATCH
+from .model_routing import estimate_cost
+from .observability import METRICS
+
+
+@dataclass
+class ChatResult:
+    content: str
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def cost_usd(self) -> float:
+        return estimate_cost(self.model, self.prompt_tokens, self.completion_tokens)
+
+
+def llm_chat(
+    messages: List[dict],
+    model: str | None = None,
+    temperature: float = 0.1,
+    max_tokens: int | None = None,
+    json_mode: bool = True,
+) -> ChatResult:
+    """One chat completion with automatic usage/cost/latency accounting."""
+    endpoint, configured_model, api_key = get_llm_config()
+    model = model or configured_model
+    client = OpenAI(
+        base_url=endpoint, api_key=api_key, timeout=LLM_TIMEOUT_SECONDS, max_retries=1
+    )
+
+    started = time.time()
+    content = None
+    usage = None
+    for use_json_mode in ((True, False) if json_mode else (False,)):
+        kwargs: dict = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens or LLM_MAX_TOKENS,
+        }
+        if use_json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        try:
+            response = client.chat.completions.create(**kwargs)
+            content = (response.choices[0].message.content or "").strip()
+            usage = getattr(response, "usage", None)
+            break
+        except Exception as exc:
+            if use_json_mode and type(exc).__name__ == "BadRequestError":
+                logger.info("Provider rejected response_format; retrying without JSON mode")
+                continue
+            METRICS.inc("llm_calls_total", model=model, outcome="error")
+            raise _provider_error(exc) from None
+
+    latency = time.time() - started
+    METRICS.observe("llm_latency_seconds", latency, model=model)
+    if not content:
+        METRICS.inc("llm_calls_total", model=model, outcome="empty")
+        raise LLMError("The model returned an empty response. Please try again.")
+
+    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+    cost = estimate_cost(model, prompt_tokens, completion_tokens)
+    METRICS.inc("llm_calls_total", model=model, outcome="ok")
+    if prompt_tokens or completion_tokens:
+        METRICS.inc("llm_tokens_total", prompt_tokens, model=model, direction="input")
+        METRICS.inc("llm_tokens_total", completion_tokens, model=model, direction="output")
+        METRICS.inc("llm_cost_usd_total", round(cost, 6), model=model)
+
+    logger.info(
+        "LLM chat complete (model=%s, chars=%d, tokens=%d/%d, cost=$%.6f, %.1fs)",
+        model, len(content), prompt_tokens, completion_tokens, cost, latency,
+    )
+    return ChatResult(
+        content=content,
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+
+
+def parse_json_object(content: str) -> Any:
+    """Public defensive JSON extraction (markdown fences, embedded objects)."""
+    return _extract_json(content)
+
+
+# ── Embeddings (optional; enables vector RAG when configured) ────────────────
+
+def embeddings_configured() -> bool:
+    return bool(EMBEDDINGS_MODEL.strip()) and bool(
+        EMBEDDINGS_ENDPOINT.strip() or os.getenv("LLM_ENDPOINT", "").strip()
+    )
+
+
+def embed_texts(texts: List[str]) -> List[List[float]] | None:
+    """Embed texts via an OpenAI-compatible /embeddings endpoint.
+
+    Returns None when embeddings are not configured or the call fails —
+    callers fall back to TF-IDF retrieval. Never raises.
+    """
+    if not embeddings_configured() or not texts:
+        return None
+    from openai import OpenAI as _OpenAI
+
+    client = _OpenAI(
+        base_url=EMBEDDINGS_ENDPOINT or os.getenv("LLM_ENDPOINT", "").strip(),
+        api_key=os.getenv("LLM_API_KEY", "").strip() or "missing",
+        timeout=LLM_TIMEOUT_SECONDS,
+        max_retries=1,
+    )
+    vectors: List[List[float]] = []
+    try:
+        for start in range(0, len(texts), INDEX_EMBED_BATCH):
+            batch = [t[:8000] or " " for t in texts[start:start + INDEX_EMBED_BATCH]]
+            response = client.embeddings.create(model=EMBEDDINGS_MODEL, input=batch)
+            batch_vectors = sorted(response.data, key=lambda item: item.index)
+            vectors.extend([list(item.embedding) for item in batch_vectors])
+        METRICS.inc("embed_calls_total", outcome="ok")
+        return vectors
+    except Exception as exc:
+        METRICS.inc("embed_calls_total", outcome="error")
+        logger.warning(
+            "Embedding call failed (%s: %s); falling back to TF-IDF retrieval",
+            type(exc).__name__,
+            exc,
+        )
+        return None

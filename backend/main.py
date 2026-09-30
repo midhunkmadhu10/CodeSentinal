@@ -1,6 +1,17 @@
+"""CodeSentinal API entrypoint (v2 — SaaS edition).
+
+Keeps the legacy demo routes (/api/health, /api/auth/login, /api/demo/*,
+/api/github/import, /api/analyze, /api/settings/status) frozen in shape and
+adds the SaaS surface: JWT auth, repositories, reviews, jobs, metrics,
+evaluations, and GitHub webhooks. The legacy analyze flow runs in this module
+with module-level names (call_llm, import_repository_review) so tests can
+monkeypatch them at the `main` boundary.
+"""
+
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Ensure the backend directory is on the path
@@ -13,30 +24,58 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.auth import get_auth_token, verify_credentials, verify_token
+from app.auth import get_auth_token, seed_demo_user, verify_credentials, get_current_user
 from app.config import FALLBACK_CHUNKS, MAX_RETRIEVAL_CHUNKS
-from app.github import import_repository_review
-from app.llm import LLMError, call_llm
+from app.database import get_db, init_db
+from app.db_models import User
+from app.github import import_repository_review  # noqa: F401 — monkeypatch target
+from app.llm import LLMError, call_llm  # noqa: F401 — monkeypatch target
 from app.models import (
     AnalyzeRequest,
     AnalyzeResponse,
-    Finding,
-    GitHubImportRequest,
-    GitHubImportResponse,
     LoginRequest,
-    LoginResponse,
     ScreeningSuggestion,
 )
+from app.observability import configure_logging
+from app.pipeline import build_screening_suggestions
 from app.rag import build_index, search_index
+from app.routers import auth as auth_router
+from app.routers import evals as evals_router
+from app.routers import jobs as jobs_router
+from app.routers import metrics as metrics_router
+from app.routers import repos as repos_router
+from app.routers import reviews as reviews_router
+from app.routers import webhooks as webhooks_router
+from app.schemas import GitHubImportRequest, GitHubImportResponse
 from app.utils import extract_code_snippets, parse_diff
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
+configure_logging(os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("codesentinal")
 
-app = FastAPI(title="CodeSentinal API", version="1.1.0")
+VERSION = "2.0.0"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        seed_demo_user(db)
+    finally:
+        db.close()
+    from app.worker import start_worker
+
+    start_worker()
+    logger.info("CodeSentinal API %s started", VERSION)
+    yield
+    from app.worker import stop_worker
+
+    stop_worker()
+
+
+app = FastAPI(title="CodeSentinal API", version=VERSION, lifespan=lifespan)
 
 # CORS — restrict to the frontend origin(s) via CORS_ORIGINS (comma-separated).
 _cors_origins = [
@@ -50,7 +89,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -61,48 +100,72 @@ async def unhandled_exception_handler(request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
+# ── SaaS routers ─────────────────────────────────────────────────────────────
+app.include_router(auth_router.router)
+app.include_router(repos_router.router)
+app.include_router(reviews_router.router)
+app.include_router(jobs_router.router)
+app.include_router(metrics_router.router)
+app.include_router(evals_router.router)
+app.include_router(webhooks_router.router)
+
+
 # ── Health ──────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "codesentinal"}
+    return {"status": "ok", "service": "codesentinal", "version": VERSION}
 
 
+# ── Settings ────────────────────────────────────────────────────────────────
 @app.get("/api/settings/status")
-def settings_status(_=Depends(verify_token)):
-    """Safe configuration metadata. Never exposes the API key itself."""
-    return {
-        "llm_configured": bool(os.getenv("LLM_API_KEY", "").strip())
+def settings_status(_user: User = Depends(get_current_user)):
+    """Safe configuration metadata. Never exposes any API key itself."""
+    llm_configured = (
+        bool(os.getenv("LLM_API_KEY", "").strip())
         and bool(os.getenv("LLM_ENDPOINT", "").strip())
-        and bool(os.getenv("LLM_MODEL", "").strip()),
+        and bool(os.getenv("LLM_MODEL", "").strip())
+    )
+    from app.database import is_postgres, pgvector_ready
+    from app.llm import embeddings_configured
+    from app.model_routing import routing_table
+
+    return {
+        "llm_configured": llm_configured,
         "llm_endpoint": os.getenv("LLM_ENDPOINT", "").strip(),
         "llm_model": os.getenv("LLM_MODEL", "").strip(),
+        "embeddings_configured": embeddings_configured(),
+        "database": "postgres" if is_postgres() else "sqlite",
+        "pgvector_enabled": pgvector_ready(),
+        "worker_running": os.getenv("WORKER_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off"),
+        "routing": routing_table(),
     }
 
 
-# ── Auth ────────────────────────────────────────────────────────────────────
-@app.post("/api/auth/login", response_model=LoginResponse)
+# ── Legacy auth (frozen shape; fails closed) ────────────────────────────────
+@app.post("/api/auth/login")
 def login(req: LoginRequest):
+    """Legacy demo login: {username, password} → {token} (static env token)."""
     if not verify_credentials(req.username, req.password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    return LoginResponse(token=get_auth_token())
+    return {"token": get_auth_token()}
 
 
-# ── Demo ────────────────────────────────────────────────────────────────────
+# ── Demo fixtures ────────────────────────────────────────────────────────────
 @app.get("/api/demo/diff")
-def get_demo_diff(_=Depends(verify_token)):
+def get_demo_diff(_user: User = Depends(get_current_user)):
     demo_path = Path(__file__).parent / "demo" / "sample_diff.diff"
     return {"diff": demo_path.read_text(encoding="utf-8")}
 
 
 @app.get("/api/demo/rules")
-def get_demo_rules(_=Depends(verify_token)):
+def get_demo_rules(_user: User = Depends(get_current_user)):
     rules_path = Path(__file__).parent / "demo" / "sample_rules.md"
     return {"rules": rules_path.read_text(encoding="utf-8")}
 
 
-# ── GitHub import ───────────────────────────────────────────────────────────
+# ── Legacy GitHub import ─────────────────────────────────────────────────────
 @app.post("/api/github/import", response_model=GitHubImportResponse)
-def github_import(req: GitHubImportRequest, _=Depends(verify_token)):
+def github_import(req: GitHubImportRequest, _user: User = Depends(get_current_user)):
     """Import a PR (or latest commit comparison) and a repository security policy."""
     try:
         repository, diff, policy, policy_path = import_repository_review(
@@ -121,38 +184,9 @@ def github_import(req: GitHubImportRequest, _=Depends(verify_token)):
         )
 
 
-def build_screening_suggestions(findings: list[Finding]) -> list[ScreeningSuggestion]:
-    """Convert findings into a short, actionable human screening checklist."""
-    if not findings:
-        return [
-            ScreeningSuggestion(
-                priority="Low",
-                title="Complete a targeted review",
-                action="No policy violations were found. Review authentication, "
-                "authorization, and secret handling before merge.",
-            )
-        ]
-
-    severity_order = {"High": 0, "Medium": 1, "Low": 2}
-    sorted_findings = sorted(
-        findings, key=lambda finding: severity_order.get(finding.severity.value, 3)
-    )
-    suggestions = []
-    for finding in sorted_findings[:3]:
-        suggestions.append(
-            ScreeningSuggestion(
-                priority=finding.severity,
-                title=f"Screen {finding.file_line}",
-                action=f"Validate the suggested fix, add a regression test, and confirm "
-                f"the change meets the referenced security policy. {finding.risk}",
-            )
-        )
-    return suggestions
-
-
-# ── Analyze ─────────────────────────────────────────────────────────────────
+# ── Legacy analyze (frozen shape; module-level names are monkeypatch targets) ─
 @app.post("/api/analyze", response_model=AnalyzeResponse)
-def analyze(req: AnalyzeRequest, _=Depends(verify_token)):
+def analyze(req: AnalyzeRequest, _user: User = Depends(get_current_user)):
     if not req.diff.strip():
         return AnalyzeResponse(
             error="No diff provided. Please paste a diff or upload a .diff file."
