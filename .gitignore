@@ -45,6 +45,10 @@ out/
 venv/
 .venv/
 
+# Local database files (never commit runtime state)
+*.db
+*.db-journal
+
 # FAISS cache
 *.faiss
 

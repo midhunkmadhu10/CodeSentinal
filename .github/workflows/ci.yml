@@ -28,6 +28,9 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
+      - name: Byte-compile the backend
+        run: python -m compileall -q .
+
       - name: Run tests
         env:
           # Auth is fail-closed; tests provide their own values for anything

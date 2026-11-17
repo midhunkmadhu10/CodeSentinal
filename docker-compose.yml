@@ -1,4 +1,26 @@
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-codesentinal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-codesentinal}
+      POSTGRES_DB: ${POSTGRES_DB:-codesentinal}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-codesentinal} -d ${POSTGRES_DB:-codesentinal}",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -7,6 +29,13 @@ services:
       - "8000:8000"
     env_file:
       - ./backend/.env
+    environment:
+      # Explicit environment wins over env_file, so the container always talks
+      # to the bundled pgvector database unless overridden.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-codesentinal}:${POSTGRES_PASSWORD:-codesentinal}@db:5432/${POSTGRES_DB:-codesentinal}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: always
     # Liveness probe is defined in backend/Dockerfile (HEALTHCHECK).
 
@@ -28,3 +57,6 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+
+volumes:
+  pgdata:

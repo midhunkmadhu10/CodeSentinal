@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { login as apiLogin } from '@/lib/api';
+import { login as apiLogin, loginWithEmail } from '@/lib/api';
 import LoginForm from '@/components/LoginForm';
 
 export default function Home() {
@@ -21,7 +21,15 @@ export default function Home() {
   const handleLogin = async (username: string, password: string) => {
     setLoading(true);
     try {
-      const token = await apiLogin(username, password);
+      // Prefer the multi-user JWT endpoint (email + password) and fall back to
+      // the legacy shared-credential login so existing deployments keep working.
+      let token: string;
+      try {
+        const result = await loginWithEmail(username, password);
+        token = result.access_token;
+      } catch {
+        token = await apiLogin(username, password);
+      }
       login(token);
       router.replace('/analyze');
     } finally {

@@ -11,6 +11,7 @@ monkeypatch them at the `main` boundary.
 import logging
 import os
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.auth import get_auth_token, seed_demo_user, verify_credentials, get_current_user
-from app.config import FALLBACK_CHUNKS, MAX_RETRIEVAL_CHUNKS
+from app.config import FALLBACK_CHUNKS, MAX_RETRIEVAL_CHUNKS, WORKER_ENABLED
 from app.database import get_db, init_db
 from app.db_models import User
 from app.github import import_repository_review  # noqa: F401 — monkeypatch target
@@ -54,6 +55,36 @@ logger = logging.getLogger("codesentinal")
 
 VERSION = "2.0.0"
 
+_startup_done = False
+_startup_lock = threading.Lock()
+
+
+def _ensure_startup() -> None:
+    """Idempotent process bootstrap (tables, demo user, worker).
+
+    Serverless platforms (Vercel) do not reliably run the ASGI lifespan, so the
+    same initialization also runs on the first request. Every step is safe to
+    repeat.
+    """
+    global _startup_done
+    if _startup_done:
+        return
+    with _startup_lock:
+        if _startup_done:
+            return
+        init_db()
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            seed_demo_user(db)
+        finally:
+            db.close()
+        from app.worker import start_worker
+
+        start_worker()
+        _startup_done = True
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -76,6 +107,14 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="CodeSentinal API", version=VERSION, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _bootstrap_once(request, call_next):
+    """Guarantee database/worker initialization without relying on lifespan."""
+    if not _startup_done:
+        _ensure_startup()
+    return await call_next(request)
 
 # CORS — restrict to the frontend origin(s) via CORS_ORIGINS (comma-separated).
 _cors_origins = [
@@ -136,7 +175,7 @@ def settings_status(_user: User = Depends(get_current_user)):
         "embeddings_configured": embeddings_configured(),
         "database": "postgres" if is_postgres() else "sqlite",
         "pgvector_enabled": pgvector_ready(),
-        "worker_running": os.getenv("WORKER_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off"),
+        "worker_running": WORKER_ENABLED,
         "routing": routing_table(),
     }
 

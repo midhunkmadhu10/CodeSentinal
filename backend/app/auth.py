@@ -30,6 +30,11 @@ load_dotenv()
 logger = logging.getLogger("codesentinal.auth")
 
 _PBKDF2_ITERATIONS = 390_000
+
+# Per-process fallback secret, cached: without this every call generated a new
+# random secret, so a token signed by one request could never be verified by
+# the next one when JWT_SECRET was unset.
+_jwt_secret_fallback: str | None = None
 _MIN_PASSWORD_LEN = 8
 
 _AUTH_NOT_CONFIGURED = (
@@ -80,7 +85,10 @@ def _jwt_secret() -> str:
     if not getattr(_jwt_secret, "_warned", False):
         logger.warning("JWT_SECRET is not set; using an ephemeral per-process secret")
         _jwt_secret._warned = True  # type: ignore[attr-defined]
-    return secrets.token_hex(32)
+    global _jwt_secret_fallback
+    if _jwt_secret_fallback is None:
+        _jwt_secret_fallback = secrets.token_hex(32)
+    return _jwt_secret_fallback
 
 
 # ── Password hashing ─────────────────────────────────────────────────────────

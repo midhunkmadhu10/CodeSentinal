@@ -143,8 +143,11 @@ export default function ReviewsPage() {
       return r.counts?.[severityFilter] > 0;
     });
 
+  // The table lists findings, so pagination must count findings — not reviews.
+  const allFindings = filteredReviews.flatMap(review => review.findings || []);
   const paginatedReviews = filteredReviews.slice(page * pageSize, (page + 1) * pageSize);
-  const totalPages = Math.ceil(filteredReviews.length / pageSize);
+  const paginatedFindings = allFindings.slice(page * pageSize, (page + 1) * pageSize);
+  const totalPages = Math.max(1, Math.ceil(allFindings.length / pageSize));
 
   if (!isAuthenticated) return null;
 
@@ -234,11 +237,9 @@ export default function ReviewsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedReviews.flatMap(review =>
-                      (review.findings || []).map(finding => (
-                        <FindingRow key={finding.id} finding={finding} />
-                      ))
-                    )}
+                    {paginatedFindings.map(finding => (
+                      <FindingRow key={finding.id} finding={finding} />
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -247,7 +248,7 @@ export default function ReviewsPage() {
               {totalPages > 1 && (
                 <div className="px-4 py-4 border-t border-border/50 flex items-center justify-between">
                   <p className="text-sm text-foreground-muted">
-                    Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, filteredReviews.length)} of {filteredReviews.length} findings
+                    Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, allFindings.length)} of {allFindings.length} findings
                   </p>
                   <div className="flex items-center gap-2">
                     <button

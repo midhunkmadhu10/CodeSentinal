@@ -444,7 +444,9 @@ Full interactive documentation (Swagger UI) is available at **http://localhost:8
 - **Request validation & limits** — all payloads are validated by strict Pydantic schemas with hard size caps (≈500 KB diff, ≈1 MB rules, bounded token and repository-field lengths).
 - **No internal leakage** — unexpected errors return a generic `Internal server error` to clients; raw exception strings and unparsed LLM output go to the server logs only.
 - **Request-scoped GitHub tokens** — access tokens supplied through the "Import GitHub" flow are used for that single request and never persisted or logged.
-- **Known limitations** — this project ships plaintext, shared-secret authentication and **no database**. It is designed for local/personal use or trusted internal environments, not multi-tenant production deployment as-is. Change the credentials before exposing anything beyond localhost, and never commit a real `backend/.env` (it is git-ignored).
+- **Multi-user auth** — accounts are stored in the database with PBKDF2-HMAC-SHA256 password hashes and per-user HS256 JWTs (`JWT_SECRET`). The legacy shared `AUTH_USERNAME`/`AUTH_PASSWORD` account and static `AUTH_TOKEN` are still accepted so existing clients keep working; set a real `JWT_SECRET` in production, otherwise tokens are invalidated on every restart.
+- **Per-user isolation** — repositories, reviews, findings, jobs and metrics are scoped to the authenticated user; a review cannot borrow another account's repository.
+- **Known limitations** — the background worker is an in-process thread, so it needs a long-running host (Docker/Render/Fly/ECS) rather than a serverless platform. Never commit a real `backend/.env` (it is git-ignored).
 
 ---
 
@@ -467,6 +469,48 @@ npm run build --workspace=frontend
 ```
 
 GitHub Actions runs both suites on every push and pull request (`.github/workflows/ci.yml`).
+
+---
+
+## ☁️ Deploying to Vercel
+
+The repository holds two independently deployable apps, which is how Vercel expects a FastAPI + Next.js monorepo to be split.
+
+### 1. Backend (FastAPI) — Vercel project root `backend`
+
+| Setting | Value |
+|---|---|
+| Framework preset | Other |
+| Root Directory | `backend` |
+| Environment variables | `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_TOKEN`, `JWT_SECRET`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`, `DATABASE_URL`, `CORS_ORIGINS` |
+
+`backend/api/index.py` is the ASGI entrypoint Vercel looks for, and `backend/vercel.json` routes every `/api/*` request to it. Dependencies come from `backend/requirements.txt`.
+
+**`DATABASE_URL` is required on Vercel.** The filesystem is read-only apart from `/tmp`, so the SQLite fallback there is ephemeral and per-instance. Use a managed Postgres (Neon, Supabase, Vercel Postgres):
+
+```env
+DATABASE_URL=postgresql+psycopg://user:password@host:5432/dbname
+```
+
+The `postgresql+psycopg://` prefix matters — it selects the installed psycopg driver, while a bare `postgresql://` URL would look for psycopg2. Tables are created on first request, and pgvector is enabled automatically when the `vector` extension is available (in-process cosine similarity otherwise), so there is no migration step.
+
+The background worker is turned off automatically when Vercel's `VERCEL` variable is present, because a serverless function cannot keep a daemon thread alive. Auth, manual reviews, metrics and evaluations all work; repository indexing and webhook-triggered reviews stay `queued` until the worker runs on a long-lived host (Docker/Render/Fly/ECS).
+
+Set `CORS_ORIGINS` to the deployed frontend origin.
+
+### 2. Frontend (Next.js) — Vercel project root `frontend`
+
+| Setting | Value |
+|---|---|
+| Framework preset | Next.js |
+| Root Directory | `frontend` |
+| Environment variable | `NEXT_PUBLIC_API_URL` = the backend deployment URL |
+
+The client defaults to same-origin `/api` calls; `NEXT_PUBLIC_API_URL` is what points it at the separate backend project. On non-Vercel hosts the Next.js rewrite proxies `/api/*` to `NEXT_PUBLIC_API_URL` (or `http://localhost:8000` in development).
+
+### 3. GitHub webhook
+
+Point the repository webhook at `https://<backend-host>/api/webhooks/github`, content type `application/json`, with the same value as `GITHUB_WEBHOOK_SECRET`. Deliveries are verified with HMAC-SHA256 and the endpoint returns `503` when the secret is unset.
 
 ---
 

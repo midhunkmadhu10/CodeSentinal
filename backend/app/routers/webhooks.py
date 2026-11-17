@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..db_models import Event, Review
+from ..db_models import Event, Repository, Review
 from ..github_service import parse_pull_request_event, verify_webhook_signature
 from ..observability import METRICS, log_event
 from ..worker import enqueue_job
@@ -69,18 +69,29 @@ async def github_webhook(
                     )
                     .first()
                 )
+                # The review must belong to an account: webhook deliveries carry
+                # no session, so inherit the owner of the connected repository.
+                linked_repo = (
+                    db.query(Repository)
+                    .filter(Repository.full_name == f"{owner}/{name}")
+                    .first()
+                )
                 if duplicate is not None:
                     disposition = "skipped_duplicate"
                 else:
                     enqueue_job(
                         db,
                         type="review_pull_request",
+                        user_id=linked_repo.user_id if linked_repo else None,
+                        repo_id=linked_repo.id if linked_repo else None,
                         payload={
                             "owner": owner,
                             "name": name,
                             "pull_number": number,
                             "trigger": "webhook",
                             "post_comment": True,
+                            "user_id": linked_repo.user_id if linked_repo else None,
+                            "repo_id": linked_repo.id if linked_repo else None,
                         },
                     )
                     disposition = "enqueued"

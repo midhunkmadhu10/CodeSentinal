@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 const STATUS_COLORS: Record<string, string> = {
+  indexed: 'text-success bg-success/10 border-success/20',
   completed: 'text-success bg-success/10 border-success/20',
   pending: 'text-warning bg-warning/10 border-warning/20',
   indexing: 'text-primary bg-primary/10 border-primary/20 animate-pulse',
@@ -26,6 +27,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_ICONS: Record<string, React.ReactNode> = {
+  indexed: <CheckCircle className="w-4 h-4" />,
   completed: <CheckCircle className="w-4 h-4" />,
   pending: <Clock className="w-4 h-4" />,
   indexing: <RefreshCw className="w-4 h-4 animate-spin" />,

@@ -1,4 +1,7 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Same-origin by default: local dev and self-hosted builds proxy /api through
+// the Next.js rewrite, and on Vercel the platform routes /api to the Python
+// function. Set NEXT_PUBLIC_API_URL only to point at a separate backend.
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
 
 const TOKEN_KEY = 'codesentinal_token';
 
@@ -41,7 +44,21 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
     throw new Error(body.detail || `Request failed with status ${res.status}`);
   }
 
-  return res.json();
+  // 204 (e.g. DELETE) and empty bodies are not JSON — parsing them threw.
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
+  const text = await res.text();
+  if (!text) {
+    return undefined as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────

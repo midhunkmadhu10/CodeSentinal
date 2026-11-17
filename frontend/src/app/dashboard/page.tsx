@@ -85,14 +85,14 @@ function RecentActivity({ reviews, jobs }: { reviews: Review[]; jobs: Job[] }) {
    .slice(0, 8);
 
   const getStatusColor = (status: string) => {
-    if (status === 'completed' || status === 'success') return 'text-success';
+    if (status === 'completed' || status === 'indexed' || status === 'success' || status === 'succeeded') return 'text-success';
     if (status === 'failed' || status === 'error') return 'text-danger';
     if (status === 'running' || status === 'indexing') return 'text-primary animate-pulse';
     return 'text-warning';
   };
 
   const getStatusIcon = (status: string) => {
-    if (status === 'completed' || status === 'success') return <CheckCircle className="w-3.5 h-3.5" />;
+    if (status === 'completed' || status === 'indexed' || status === 'success' || status === 'succeeded') return <CheckCircle className="w-3.5 h-3.5" />;
     if (status === 'failed' || status === 'error') return <AlertCircle className="w-3.5 h-3.5" />;
     if (status === 'running' || status === 'indexing') return <RefreshCw className="w-3.5 h-3.5 animate-spin" />;
     return <Clock className="w-3.5 h-3.5" />;
@@ -176,7 +176,7 @@ export default function DashboardPage() {
   const highFindings = metrics?.usage?.high_findings ?? 0;
   const estimatedCost = metrics?.usage?.estimated_cost_usd ?? 0;
   const avgLatency = metrics?.usage?.avg_review_latency_seconds ?? 0;
-  const indexedRepos = repos.filter(r => r.index_status === 'completed').length;
+  const indexedRepos = repos.filter(r => r.index_status === 'indexed').length;
   const pendingJobs = jobs.filter(j => j.status === 'queued' || j.status === 'running').length;
 
   const handleLogout = () => {

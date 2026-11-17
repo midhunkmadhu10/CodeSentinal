@@ -19,15 +19,35 @@ from .config import DATABASE_URL, EMBEDDING_DIM
 
 logger = logging.getLogger("codesentinal.database")
 
-_is_postgres = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+_is_postgres = DATABASE_URL.startswith(
+    ("postgres://", "postgresql://", "postgresql+psycopg://")
+)
 _is_sqlite = DATABASE_URL.startswith("sqlite")
+
+
+def _normalized_url(url: str) -> str:
+    """Point bare postgres URLs at psycopg (v3), which is what we install.
+
+    SQLAlchemy defaults `postgresql://` to psycopg2, which is not a dependency,
+    so a plain managed-Postgres URL would fail at connect time. Accepting the
+    common `postgres://` form (Heroku-style) avoids a second failure mode.
+    """
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
 
 _engine_kwargs: dict = {"pool_pre_ping": True}
 if _is_sqlite:
     # The background worker and request handlers share the engine.
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    # Serverless platforms cap concurrent connections; keep pools small.
+    _engine_kwargs.update({"pool_size": 5, "max_overflow": 5})
 
-engine = create_engine(DATABASE_URL, **_engine_kwargs)
+engine = create_engine(_normalized_url(DATABASE_URL), **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

@@ -104,18 +104,36 @@ def route(
 
 
 def routing_table() -> dict[str, Any]:
+    """Routing configuration for the dashboard.
+
+    `fast`/`deep` are top-level (flat) because that is the shape the settings
+    page and the typed API client read; `tiers` is kept as an alias so stored
+    review metrics stay readable.
+    """
+    fast = {
+        "model": get_model_for_tier("fast"),
+        "cost_per_1m_in": MODEL_COST_FAST_IN,
+        "cost_per_1m_out": MODEL_COST_FAST_OUT,
+    }
+    deep = {
+        "model": get_model_for_tier("deep"),
+        "cost_per_1m_in": MODEL_COST_DEEP_IN,
+        "cost_per_1m_out": MODEL_COST_DEEP_OUT,
+    }
     return {
         "threshold": DEEP_TIER_THRESHOLD,
+        "fast": fast,
+        "deep": deep,
         "tiers": {
             "fast": {
-                "model": get_model_for_tier("fast"),
+                "model": fast["model"],
                 "cost_per_1m_tokens_usd": {
                     "input": MODEL_COST_FAST_IN,
                     "output": MODEL_COST_FAST_OUT,
                 },
             },
             "deep": {
-                "model": get_model_for_tier("deep"),
+                "model": deep["model"],
                 "cost_per_1m_tokens_usd": {
                     "input": MODEL_COST_DEEP_IN,
                     "output": MODEL_COST_DEEP_OUT,

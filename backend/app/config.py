@@ -52,7 +52,13 @@ def _bool_env(name: str, default: bool) -> bool:
 # fallback keeps local dev and CI zero-config. Embeddings are always stored as
 # JSON in code_chunks; on Postgres an auxiliary `chunk_vectors` table with a
 # native vector column accelerates similarity search when embeddings exist.
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./codesentinal.db")
+# Vercel/serverless filesystems are read-only except /tmp, so the zero-config
+# SQLite fallback points there (ephemeral) instead of the read-only bundle.
+_ON_VERCEL = bool(os.getenv("VERCEL"))
+_SQLITE_DEFAULT = (
+    "sqlite:////tmp/codesentinal.db" if _ON_VERCEL else "sqlite:///./codesentinal.db"
+)
+DATABASE_URL = os.getenv("DATABASE_URL", _SQLITE_DEFAULT).strip()
 EMBEDDING_DIM = _int_env("EMBEDDING_DIM", 768)
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -103,7 +109,9 @@ REVIEW_MAX_FILE_BYTES = _int_env("REVIEW_MAX_FILE_BYTES", 100_000)
 MAX_PR_COMMENT_CHARS = 6000
 
 # ── Background worker ────────────────────────────────────────────────────────
-WORKER_ENABLED = _bool_env("WORKER_ENABLED", True)
+# Serverless functions cannot keep a daemon worker thread alive, so the worker
+# defaults off on Vercel unless explicitly enabled.
+WORKER_ENABLED = _bool_env("WORKER_ENABLED", not _ON_VERCEL)
 WORKER_POLL_SECONDS = _float_env("WORKER_POLL_SECONDS", 1.0)
 WORKER_CONCURRENCY = _int_env("WORKER_CONCURRENCY", 2)
 JOB_MAX_ATTEMPTS = _int_env("JOB_MAX_ATTEMPTS", 3)

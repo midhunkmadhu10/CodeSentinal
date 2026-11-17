@@ -46,23 +46,45 @@ def enqueue_job(
 
 
 def _claim_next_job() -> Optional[Job]:
-    """Atomically claim one queued job (queued → running)."""
+    """Atomically claim one queued job (queued → running).
+
+    The status check is repeated inside the UPDATE so that two worker threads
+    cannot both claim the same row (a plain read-then-write race under
+    WORKER_CONCURRENCY > 1). The conditional UPDATE is portable across
+    Postgres and SQLite, unlike SELECT ... FOR UPDATE SKIP LOCKED.
+    """
     db = SessionLocal()
     try:
-        job = (
-            db.query(Job)
-            .filter(Job.status == "queued", Job.attempts < JOB_MAX_ATTEMPTS)
-            .order_by(Job.created_at)
-            .first()
-        )
-        if job is None:
-            return None
-        job.status = "running"
-        job.attempts += 1
-        job.started_at = utcnow()
-        db.commit()
-        db.refresh(job)
-        return job
+        for _ in range(5):
+            candidate = (
+                db.query(Job.id)
+                .filter(Job.status == "queued", Job.attempts < JOB_MAX_ATTEMPTS)
+                .order_by(Job.created_at)
+                .first()
+            )
+            if candidate is None:
+                return None
+            job_id = candidate[0]
+            claimed = (
+                db.query(Job)
+                .filter(
+                    Job.id == job_id,
+                    Job.status == "queued",
+                    Job.attempts < JOB_MAX_ATTEMPTS,
+                )
+                .update(
+                    {
+                        "status": "running",
+                        "attempts": Job.attempts + 1,
+                        "started_at": utcnow(),
+                    },
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
+            if claimed:
+                return db.get(Job, job_id)
+        return None
     finally:
         db.close()
 
@@ -83,23 +105,58 @@ def handle_job(db: Session, job: Job) -> Dict[str, Any]:
         return {"repo_id": repo.id, "status": repo.index_status}
 
     if job.type == "review_pull_request":
-        return _handle_pr_review(db, payload)
+        return _handle_pr_review(db, payload, job_id=job.id)
 
     raise ValueError(f"Unknown job type: {job.type}")
 
 
-def _handle_pr_review(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
+def _resolve_review_user_id(db: Session, payload: Dict[str, Any], owner: str, name: str) -> int:
+    """Owner for an automated review.
+
+    Webhook deliveries arrive without a session, so the owning user is resolved
+    from the connected repository (or the first account). Persisting a review
+    with a user id that does not exist used to fail the NOT NULL foreign key.
+    """
+    from .db_models import Repository, User
+
+    if payload.get("user_id"):
+        return int(payload["user_id"])
+    repo = (
+        db.query(Repository).filter(Repository.full_name == f"{owner}/{name}").first()
+    )
+    if repo is not None and repo.user_id:
+        return int(repo.user_id)
+    owner_user = db.query(User).order_by(User.id).first()
+    if owner_user is None:
+        raise ValueError(
+            "No account exists to own this automated review. Register a user or "
+            "set AUTH_USERNAME/AUTH_PASSWORD before enabling webhooks."
+        )
+    return int(owner_user.id)
+
+
+def _handle_pr_review(
+    db: Session, payload: Dict[str, Any], job_id: Optional[int] = None
+) -> Dict[str, Any]:
     """Fetch a PR diff, run the full pipeline, optionally post a GitHub comment."""
     import os
 
     from . import github_service
+    from .db_models import Repository
     from .pipeline import review_to_dict, run_review
 
     owner, name = payload["owner"], payload["name"]
     pull_number = int(payload["pull_number"])
-    user_id = payload.get("user_id")
+    user_id = _resolve_review_user_id(db, payload, owner, name)
     token = payload.get("access_token") or os.getenv("GITHUB_TOKEN", "").strip() or None
     repo_id = payload.get("repo_id")
+    if repo_id is None:
+        linked = (
+            db.query(Repository)
+            .filter(Repository.full_name == f"{owner}/{name}")
+            .first()
+        )
+        repo_id = linked.id if linked is not None else None
 
     pr_meta = github_service.fetch_pr_metadata(owner, name, pull_number, token)
     diff = github_service.fetch_pr_diff(owner, name, pull_number, token)
@@ -108,7 +165,8 @@ def _handle_pr_review(db: Session, payload: Dict[str, Any]) -> Dict[str, Any]:
 
     review = run_review(
         db,
-        user_id=user_id or 0,
+        user_id=user_id,
+        job_id=job_id,
         diff=diff,
         rules_text="",
         trigger="webhook" if payload.get("trigger") == "webhook" else "manual",
@@ -187,14 +245,17 @@ def _worker_loop(worker_id: int) -> None:
     logger.info("Worker %d stopped", worker_id)
 
 
+def worker_status() -> bool:
+    """True when at least one worker thread is alive and not stopping."""
+    return not _stop.is_set() and any(t.is_alive() for t in _threads)
+
+
 def start_worker() -> None:
     """Start the worker threads (idempotent; no-op when WORKER_ENABLED=false)."""
     global _started_once
-    import os
+    from .config import WORKER_ENABLED
 
-    if _started_once or os.getenv("WORKER_ENABLED", "true").strip().lower() in (
-        "0", "false", "no", "off",
-    ):
+    if _started_once or not WORKER_ENABLED:
         return
     _started_once = True
     for worker_id in range(max(1, WORKER_CONCURRENCY)):

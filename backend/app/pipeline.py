@@ -80,6 +80,7 @@ def _persist_review(
     review = Review(
         user_id=user_id,
         repo_id=repo_id,
+        job_id=job_id,
         trigger=trigger,
         repository=repository,
         title=title,

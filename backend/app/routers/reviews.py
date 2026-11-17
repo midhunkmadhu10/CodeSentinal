@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
-from ..db_models import Review, User
+from ..db_models import Repository, Review, User
 from ..database import get_db
 from ..pipeline import review_to_dict, run_review
 from ..schemas import ReviewCreate, ReviewOut
@@ -19,6 +19,11 @@ def create_review(
     db: Session = Depends(get_db),
 ):
     """Run the full review pipeline (scanners → agents → corroboration → fixes)."""
+    if req.repo_id is not None:
+        # Never let a review borrow another account's repository context.
+        repo = db.get(Repository, req.repo_id)
+        if repo is None or repo.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Repository not found")
     review = run_review(
         db,
         user_id=user.id,
@@ -47,7 +52,8 @@ def list_reviews(
     reviews = (
         query.order_by(Review.id.desc()).offset(offset).limit(limit).all()
     )
-    return [review_to_dict(review, include_findings=False) for review in reviews]
+    # Findings are included: the review history table renders per-finding rows.
+    return [review_to_dict(review) for review in reviews]
 
 
 @router.get("/{review_id}", response_model=ReviewOut)
